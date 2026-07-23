@@ -1,0 +1,35 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <title>Architecture Summary: The Flaky Network</title>
+    <style>
+        body { font-family: -apple-system, sans-serif; line-height: 1.6; max-width: 800px; margin: 40px auto; padding: 0 20px; color: #333; }
+        h1, h2 { border-bottom: 2px solid #eaeaea; padding-bottom: 10px; }
+        code { background: #f4f4f4; padding: 2px 5px; border-radius: 4px; font-family: monospace; }
+        .highlight { background-color: #f0f7ff; padding: 15px; border-left: 4px solid #0066cc; margin: 20px 0; }
+    </style>
+</head>
+<body>
+    <h1>Campus Systems Architecture Summary</h1>
+    
+    <h2>1. Design Philosophy</h2>
+    <p>Given the strict real-time constraints (latency over throughput) and the 2.00x bandwidth budget, standard ARQ (Automatic Repeat reQuest) protocols were rejected due to the inherent Round-Trip-Time (RTT) penalty. Forward Error Correction (FEC) block-parity was rejected due to forced sender-side delay. The optimal solution was a stateless proactive redundancy model paired with a strictly-timed receiver jitter buffer.</p>
+
+    <h2>2. Sender Architecture (N-1 Piggybacking)</h2>
+    <p>The sender reads the 164-byte frame from the harness and caches the payload. It constructs a custom 324-byte UDP datagram containing the 4-byte sequence number, the current 160-byte payload, and the cached 160-byte payload from the previous frame. If packet <code>i</code> is dropped, packet <code>i+1</code> seamlessly delivers the missing data with zero latency penalty.</p>
+    <div class="highlight">
+        <strong>The 1/30 Bandwidth Exploit:</strong> A strict 324-byte packet results in a 2.02x bandwidth overhead, failing the hard constraint. To solve this, the sender omits the redundant payload on <code>seq % 30 == 0</code>. This micro-optimization reduces total bandwidth to 1.99x while maintaining 96.6% redundancy coverage.
+    </div>
+
+    <h2>3. Receiver Architecture (Clock-Priority Event Loop)</h2>
+    <p>The receiver pre-allocates a 1024-slot circular <code>std::array</code> jitter buffer. It operates on a two-phase event loop to prevent starvation:</p>
+    <ul>
+        <li><strong>Phase 1 (Network Drain):</strong> Uses <code>poll()</code> with a 0ms timeout to aggressively drain the OS socket buffer, reconstructing missing frames on the fly.</li>
+        <li><strong>Phase 2 (Strict Playout):</strong> Compares absolute epoch time against the calculated deadline (<code>T0 + DELAY_MS + i * 20ms - 2ms buffer</code>). Frames are delivered to the player exactly when due, completely decoupling network arrival time from playout time.</li>
+    </ul>
+
+    <h2>4. Limitations</h2>
+    <p>This architecture trades structural complexity for speed. It cannot survive burst drops of length 2 or greater. It mitigates this limitation by leveraging a higher <code>DELAY_MS</code> to absorb all jitter misses, leaving the entire 1.00% error budget available to absorb inevitable burst drops.</p>
+</body>
+</html>
